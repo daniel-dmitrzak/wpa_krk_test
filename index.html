@@ -176,6 +176,7 @@
 "use strict";
 
 const CSV_URL = "exam_questions.csv";
+const SESSION_SIZE = 20; // questions per session
 
 let questions = [];
 let current = 0;
@@ -256,8 +257,9 @@ async function loadQuiz() {
     const res = await fetch(CSV_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`Server returned ${res.status} for ${CSV_URL}`);
     loadCSVText(await res.text());
+    const shown = Math.min(questions.length, SESSION_SIZE);
     el("start-hint").textContent =
-      `Plik zawiera ${questions.length} pytań. Powodzenia!`;
+      `Plik zawiera ${questions.length} pytań. W każdej sesji losowane jest ${shown}. Powodzenia!`;
     showScreen("start-screen");
   } catch (err) {
     el("error-text").textContent = err.message;
@@ -265,8 +267,21 @@ async function loadQuiz() {
   }
 }
 
-// ---------- Quiz flow (fixed order — no shuffling) ----------
+// ---------- Quiz flow (shuffled questions, fixed answer order) ----------
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 function startQuiz() {
+  // Shuffle questions, keep first SESSION_SIZE, answers stay in CSV order
+  questions = shuffle(questions);
+  if (questions.length > SESSION_SIZE) questions = questions.slice(0, SESSION_SIZE);
+
   current = 0;
   score = 0;
   showScreen("quiz-screen");
