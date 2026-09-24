@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quiz egzaminacyjny</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: sans-serif;
+    background: #f4f5f7;
+    color: #1c1e21;
+    padding: 12px;
+  }
+  #app {
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.4em; margin: 8px 0 4px; }
+  p.hint { color: #65676b; margin-top: 0; }
+  .card {
+    background: #ffffff;
+    border: 1px solid #d8dadd;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  button {
+    font-size: 1em;
+    border: 2px solid #d8dadd;
+    border-radius: 8px;
+    padding: 14px;
+    width: 100%;
+    background: #f4f5f7;
+    color: #1c1e21;
+    text-align: left;
+  }
+  .btn-primary {
+    background: #4361ee;
+    border-color: #4361ee;
+    color: #ffffff;
+    font-weight: bold;
+    text-align: center;
+  }
+  .mode-btn {
+    margin-bottom: 10px;
+  }
+  .mode-btn.selected {
+    border-color: #4361ee;
+    background: #e8ecfd;
+  }
+  .mode-sub {
+    display: block;
+    font-size: 0.85em;
+    color: #65676b;
+    margin-top: 2px;
+  }
+  .answer {
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+  .answer.correct {
+    border-color: #2a9d4f;
+    background: #ddf0e2;
+  }
+  .answer.wrong {
+    border-color: #d93025;
+    background: #fae3e1;
+  }
+  .progress {
+    margin-bottom: 12px;
+    color: #65676b;
+    font-size: 0.9em;
+  }
+  .bar {
+    height: 8px;
+    background: #d8dadd;
+    border-radius: 4px;
+    margin-top: 4px;
+  }
+  .bar-fill {
+    height: 8px;
+    width: 0;
+    background: #4361ee;
+    border-radius: 4px;
+  }
+  .question {
+    font-size: 1.15em;
+    font-weight: bold;
+    margin: 0 0 16px;
+    line-height: 1.45;
+  }
+  #feedback {
+    min-height: 1.4em;
+    font-weight: bold;
+    margin: 8px 0 12px;
+    text-align: center;
+  }
+  .ok { color: #2a9d4f; }
+  .bad { color: #d93025; }
+  .big-score {
+    font-size: 2.4em;
+    font-weight: bold;
+    text-align: center;
+    margin: 16px 0;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Loading screen -->
+  <section id="loading-screen" class="card">
+    <h1>Quiz egzaminacyjny</h1>
+    <p class="hint">Wczytywanie pytan...</p>
+  </section>
+
+  <!-- Start screen -->
+  <section id="start-screen" class="card hidden">
+    <h1>Quiz egzaminacyjny</h1>
+    <p class="hint" id="start-hint"></p>
+    <p class="hint"><b>Wybierz tryb:</b></p>
+    <button id="mode-short-btn" class="mode-btn selected" type="button">
+      Sesja — 20 pytan
+      <span class="mode-sub" id="mode-short-sub"></span>
+    </button>
+    <button id="mode-full-btn" class="mode-btn" type="button">
+      Pelny egzamin
+      <span class="mode-sub" id="mode-full-sub"></span>
+    </button>
+    <button id="start-btn" class="btn-primary" type="button">Rozpocznij quiz</button>
+  </section>
+
+  <!-- Error screen -->
+  <section id="error-screen" class="card hidden">
+    <h1>Blad</h1>
+    <p class="hint" id="error-text"></p>
+    <button id="retry-btn" class="btn-primary" type="button">Sprobuj ponownie</button>
+  </section>
+
+  <!-- Quiz screen -->
+  <section id="quiz-screen" class="hidden">
+    <div class="progress">
+      <span id="counter"></span>
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+    </div>
+    <div class="card">
+      <p class="question" id="question-text"></p>
+      <div id="answers"></div>
+      <p id="feedback"></p>
+      <button id="next-btn" class="btn-primary" type="button" disabled>Nastepne</button>
+    </div>
+  </section>
+
+  <!-- Score screen -->
+  <section id="score-screen" class="card hidden">
+    <h1 style="text-align:center">Koniec!</h1>
+    <p class="big-score" id="score-text"></p>
+    <p class="hint" style="text-align:center" id="score-msg"></p>
+    <button id="restart-btn" class="btn-primary" type="button">Zagraj ponownie</button>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+var CSV_URL = "exam_questions.csv";
+var SESSION_SIZE = 20; // questions in short mode
+
+var questions = [];
+var current = 0;
+var score = 0;
+var locked = false;
+var modeShortSelected = true;
+
+function el(id) { return document.getElementById(id); }
+
+function showScreen(id) {
+  var screens = ["loading-screen", "start-screen", "error-screen",
+                 "quiz-screen", "score-screen"];
+  for (var i = 0; i < screens.length; i++) {
+    el(screens[i]).style.display = (screens[i] === id) ? "block" : "none";
+  }
+}
+
+// ---------- CSV parsing (handles quoted fields with commas) ----------
+function parseCSV(text) {
+  var rows = [];
+  var row = [], field = "", inQuotes = false;
+  for (var i = 0; i < text.length; i++) {
+    var c = text.charAt(i);
+    if (inQuotes) {
+      if (c === '"' && text.charAt(i + 1) === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === "," ) {
+      row.push(field.replace(/^\s+|\s+$/g, "")); field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text.charAt(i + 1) === "\n") i++;
+      row.push(field.replace(/^\s+|\s+$/g, "")); field = "";
+      var hasContent = false;
+      for (var j = 0; j < row.length; j++) {
+        if (row[j] !== "") { hasContent = true; break; }
+      }
+      if (hasContent) rows.push(row);
+      row = [];
+    } else {
+      field += c;
+    }
+  }
+  row.push(field.replace(/^\s+|\s+$/g, ""));
+  var lastHas = false;
+  for (var k = 0; k < row.length; k++) {
+    if (row[k] !== "") { lastHas = true; break; }
+  }
+  if (lastHas) rows.push(row);
+  return rows;
+}
+
+// Expects header: Question_Number,Question_Text,Answer_A,Answer_B,Answer_C,Correct_Answer
+function loadCSVText(text) {
+  var rows = parseCSV(text);
+  if (rows.length < 2) {
+    throw new Error("CSV needs a header row and at least one question.");
+  }
+
+  var header = rows[0];
+  for (var h = 0; h < header.length; h++) {
+    header[h] = header[h].toLowerCase();
+  }
+  function idx(name) {
+    for (var i = 0; i < header.length; i++) {
+      if (header[i] === name.toLowerCase()) return i;
+    }
+    return -1;
+  }
+
+  var qIdx = idx("Question_Text");
+  var cIdx = idx("Correct_Answer");
+  if (qIdx === -1 || cIdx === -1) {
+    throw new Error('CSV must have "Question_Text" and "Correct_Answer" columns.');
+  }
+  var answerCols = [idx("Answer_A"), idx("Answer_B"), idx("Answer_C")];
+  var nIdx = idx("Question_Number");
+
+  questions = [];
+  for (var r = 1; r < rows.length; r++) {
+    var row = rows[r];
+    var answers = [];
+    for (var a = 0; a < answerCols.length; a++) {
+      var text2 = row[answerCols[a]];
+      if (text2) answers.push(text2);
+    }
+    var correctLetter = (row[cIdx] || "").replace(/^\s+|\s+$/g, "").toUpperCase();
+    var correct = -1;
+    for (var b = 0; b < answers.length; b++) {
+      if ("ABC".charAt(b) === correctLetter) { correct = b; break; }
+    }
+    if (correct === -1) {
+      throw new Error("Row " + (r + 1) + ': unknown correct answer "' +
+                      correctLetter + '"');
+    }
+    var number = parseInt(row[nIdx], 10);
+    if (isNaN(number)) number = r;
+    questions.push({ number: number, question: row[qIdx],
+                     answers: answers, correct: correct });
+  }
+
+  if (questions.length === 0) throw new Error("No questions found in CSV.");
+}
+
+// ---------- Load CSV from server (XMLHttpRequest for old browsers) ----------
+function loadQuiz() {
+  showScreen("loading-screen");
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", CSV_URL + "?t=" + new Date().getTime(), true);
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4) return;
+    try {
+      if (xhr.status === 200 || xhr.status === 0) {
+        loadCSVText(xhr.responseText);
+        updateModeButtons();
+        showScreen("start-screen");
+      } else {
+        throw new Error("Server returned " + xhr.status + " for " + CSV_URL);
+      }
+    } catch (err) {
+      el("error-text").innerHTML = "";
+      el("error-text").appendChild(
+        document.createTextNode(err.message || String(err)));
+      showScreen("error-screen");
+    }
+  };
+  try {
+    xhr.send(null);
+  } catch (e) {
+    el("error-text").innerHTML = "";
+    el("error-text").appendChild(
+      document.createTextNode("Could not load " + CSV_URL));
+    showScreen("error-screen");
+  }
+}
+
+// ---------- Mode selection ----------
+function updateModeButtons() {
+  var total = questions.length;
+  var shortCount = Math.min(total, SESSION_SIZE);
+
+  el("mode-short-sub").innerHTML = "";
+  el("mode-short-sub").appendChild(
+    document.createTextNode("Losowane " + shortCount + " z " + total + " pytan"));
+  el("mode-full-sub").innerHTML = "";
+  el("mode-full-sub").appendChild(
+    document.createTextNode("Wszystkie " + total + " pytan, kolejnosc losowa"));
+
+  el("mode-short-btn").className =
+    "mode-btn" + (modeShortSelected ? " selected" : "");
+  el("mode-full-btn").className =
+    "mode-btn" + (modeShortSelected ? "" : " selected");
+
+  el("start-btn").innerHTML = modeShortSelected
+    ? "Rozpocznij (" + shortCount + " pytan)"
+    : "Rozpocznij (" + total + " pytan)";
+}
+
+// ---------- Quiz flow (shuffled questions, fixed answer order) ----------
+function shuffle(arr) {
+  var a = arr.slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
+function startQuiz() {
+  // Keep full pool intact: shuffle a copy, then trim for short mode
+  var pool = shuffle(questions);
+  if (modeShortSelected && pool.length > SESSION_SIZE) {
+    pool = pool.slice(0, SESSION_SIZE);
+  }
+
+  questions = pool;
+  current = 0;
+  score = 0;
+  showScreen("quiz-screen");
+  showQuestion();
+}
+
+function showQuestion() {
+  locked = false;
+  var q = questions[current];
+  el("counter").innerHTML = "";
+  el("counter").appendChild(
+    document.createTextNode((current + 1) + " / " + questions.length));
+  el("bar-fill").style.width =
+    Math.round((current / questions.length) * 100) + "%";
+
+  el("question-text").innerHTML = "";
+  el("question-text").appendChild(document.createTextNode(q.question));
+
+  el("feedback").innerHTML = "";
+  el("feedback").className = "";
+
+  el("next-btn").disabled = true;
+  el("next-btn").innerHTML =
+    (current === questions.length - 1) ? "Zobacz wynik" : "Nastepne";
+
+  var box = el("answers");
+  box.innerHTML = "";
+  for (var i = 0; i < q.answers.length; i++) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "answer";
+    btn.appendChild(document.createTextNode("ABC".charAt(i) + ". " + q.answers[i]));
+    btn.onclick = makeAnswerHandler(i, btn);
+    box.appendChild(btn);
+  }
+}
+
+function makeAnswerHandler(i, btn) {
+  return function () { selectAnswer(i, btn); };
+}
+
+function selectAnswer(i, btn) {
+  if (locked) return;
+  locked = true;
+  var q = questions[current];
+  var buttons = document.getElementById("answers").getElementsByTagName("button");
+  for (var b = 0; b < buttons.length; b++) {
+    buttons[b].disabled = true;
+  }
+  buttons[q.correct].className = "answer correct";
+
+  if (i === q.correct) {
+    score++;
+    el("feedback").innerHTML = "";
+    el("feedback").appendChild(document.createTextNode("Poprawna odpowiedz!"));
+    el("feedback").className = "ok";
+  } else {
+    btn.className = "answer wrong";
+    el("feedback").innerHTML = "";
+    el("feedback").appendChild(document.createTextNode("Niestety..."));
+    el("feedback").className = "bad";
+  }
+  el("next-btn").disabled = false;
+}
+
+function showResults() {
+  showScreen("score-screen");
+  el("score-text").innerHTML = "";
+  el("score-text").appendChild(
+    document.createTextNode(score + " / " + questions.length));
+  var pct = score / questions.length;
+  var msg;
+  if (pct === 1) msg = "Wynik idealny!";
+  else if (pct >= 0.7) msg = "Swietnie!";
+  else if (pct >= 0.4) msg = "Nieźle — sprobuj jeszcze raz!";
+  else msg = "Powodzenia na kolejnej probie!";
+  el("score-msg").innerHTML = "";
+  el("score-msg").appendChild(document.createTextNode(msg));
+}
+
+el("next-btn").onclick = function () {
+  current++;
+  if (current < questions.length) showQuestion();
+  else showResults();
+};
+
+el("mode-short-btn").onclick = function () {
+  modeShortSelected = true; updateModeButtons();
+};
+el("mode-full-btn").onclick = function () {
+  modeShortSelected = false; updateModeButtons();
+};
+el("start-btn").onclick = startQuiz;
+el("retry-btn").onclick = loadQuiz;
+el("restart-btn").onclick = function () {
+  showScreen("start-screen");
+  updateModeButtons();
+};
+
+loadQuiz();
+</script>
+</body>
+</html>
